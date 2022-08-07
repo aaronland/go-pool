@@ -2,16 +2,41 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"github.com/aaronland/go-roster"
 	"net/url"
-	"strconv"
+	"sort"
+	"strings"
 )
 
-var providers roster.Roster
+type Pool interface {
+	Length(context.Context) int64
+	Push(context.Context, any)
+	Pop(context.Context) (any, bool)
+}
 
-func ensureRoster() error {
+var pool_roster roster.Roster
 
-	if providers == nil {
+// PoolInitializationFunc is a function defined by individual pool package and used to create
+// an instance of that pool
+type PoolInitializationFunc func(ctx context.Context, uri string) (Pool, error)
+
+// RegisterPool registers 'scheme' as a key pointing to 'init_func' in an internal lookup table
+// used to create new `Pool` instances by the `NewPool` method.
+func RegisterPool(ctx context.Context, scheme string, init_func PoolInitializationFunc) error {
+
+	err := ensurePoolRoster()
+
+	if err != nil {
+		return err
+	}
+
+	return pool_roster.Register(ctx, scheme, init_func)
+}
+
+func ensurePoolRoster() error {
+
+	if pool_roster == nil {
 
 		r, err := roster.NewDefaultRoster()
 
@@ -19,69 +44,16 @@ func ensureRoster() error {
 			return err
 		}
 
-		providers = r
+		pool_roster = r
 	}
 
 	return nil
 }
 
-func Register(ctx context.Context, name string, pr Pool) error {
-
-	err := ensureRoster()
-
-	if err != nil {
-		return err
-	}
-
-	return providers.Register(ctx, name, pr)
-}
-
-type Pool interface {
-	Open(context.Context, string) error
-	Length() int64
-	Push(Item)
-	Pop() (Item, bool)
-}
-
-type Item interface {
-	String() string
-	Int() int64
-}
-
-type Int struct {
-	Item
-	int int64
-}
-
-type String struct {
-	Item
-	string string
-}
-
-func NewIntItem(i int64) Item {
-	return &Int{int: i}
-}
-
-func NewStringItem(s string) Item {
-	return &String{string: s}
-}
-
-func (i Int) String() string {
-	return strconv.FormatInt(i.int, 10)
-}
-
-func (i Int) Int() int64 {
-	return i.int
-}
-
-func (s String) String() string {
-	return s.string
-}
-
-func (s String) Int() int64 {
-	return int64(0)
-}
-
+// NewPool returns a new `Pool` instance configured by 'uri'. The value of 'uri' is parsed
+// as a `url.URL` and its scheme is used as the key for a corresponding `PoolInitializationFunc`
+// function used to instantiate the new `Pool`. It is assumed that the scheme (and initialization
+// function) have been registered by the `RegisterPool` method.
 func NewPool(ctx context.Context, uri string) (Pool, error) {
 
 	u, err := url.Parse(uri)
@@ -92,19 +64,34 @@ func NewPool(ctx context.Context, uri string) (Pool, error) {
 
 	scheme := u.Scheme
 
-	i, err := providers.Driver(ctx, scheme)
+	i, err := pool_roster.Driver(ctx, scheme)
 
 	if err != nil {
 		return nil, err
 	}
 
-	pr := i.(Pool)
-
-	err = pr.Open(ctx, uri)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return pr, nil
+	init_func := i.(PoolInitializationFunc)
+	return init_func(ctx, uri)
 }
+
+// Schemes returns the list of schemes that have been registered.
+func Schemes() []string {
+
+	ctx := context.Background()
+	schemes := []string{}
+
+	err := ensurePoolRoster()
+
+	if err != nil {
+		return schemes
+	}
+
+	for _, dr := range pool_roster.Drivers(ctx) {
+		scheme := fmt.Sprintf("%s://", strings.ToLower(dr))
+		schemes = append(schemes, scheme)
+	}
+
+	sort.Strings(schemes)
+	return schemes
+}
+

@@ -44,13 +44,14 @@ func (pl *MemoryPool) Length(ctx context.Context) int64 {
 	return atomic.LoadInt64(&pl.count)
 }
 
-func (pl *MemoryPool) Push(ctx context.Context, i any) {
+func (pl *MemoryPool) Push(ctx context.Context, i any) error {
 
 	pl.mutex.Lock()
 	defer pl.mutex.Unlock()
 
 	pl.nodes = append(pl.nodes[:pl.count], i)
 	atomic.AddInt64(&pl.count, 1)
+	return nil
 }
 
 func (pl *MemoryPool) Pop(ctx context.Context) (any, bool) {

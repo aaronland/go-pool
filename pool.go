@@ -11,7 +11,7 @@ import (
 
 type Pool interface {
 	Length(context.Context) int64
-	Push(context.Context, any)
+	Push(context.Context, any) error
 	Pop(context.Context) (any, bool)
 }
 
